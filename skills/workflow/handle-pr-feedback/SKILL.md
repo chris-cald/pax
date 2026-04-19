@@ -1,6 +1,6 @@
 ---
 name: handle-pr-feedback
-description: "Coordinate PR review loop—detect feedback severity, address minor comments automatically, revert work items if major changes needed. Use when PR has unresolved review feedback. Supports: (1) Comment triage by severity, (2) Auto-resolution of minor comments, (3) Work item reversion on blocker feedback, (4) Feedback summarization"
+description: "Coordinate PR review loops by triaging feedback severity, resolving low-risk issues, reverting work items when major rework is required, and keeping parent context slim through focused subagent delegation. Use when a PR has unresolved review comments, failing checks, or requested changes. Supports: (1) comment triage by severity, (2) low-risk auto-resolution, (3) blocker-driven work item reversion, (4) feedback summarization, (5) context minimization via subagents"
 metadata:
   category: workflow
   aspects:
@@ -38,365 +38,209 @@ license: MIT
 
 ## Overview
 
-Monitor and respond to pull request review feedback. Triage comments by severity, automatically address minor issues (typos, documentation), and intelligently revert work items when major changes are requested. Keeps feedback loop coordinated between PR state and work item status.
+Monitor and respond to pull request review feedback. Triage comments by severity, automatically address low-risk issues when appropriate, and revert work items when requested changes imply broader rework. Keep the feedback loop coordinated between PR state, validation status, and work item status.
+
+## Context Management
+
+Because PR feedback loops can become verbose, keep the parent context slim.
+
+### Rule
+
+Prefer delegating narrow, self-contained work to subagents whenever possible.
+
+Use subagents for:
+
+- fetching and summarizing review comments
+- isolating a single reviewer thread or concern
+- reproducing a failing CI check
+- implementing a narrowly scoped fix
+- generating a before/after summary for one feedback cluster
+
+Keep in the parent context only:
+
+- current PR status
+- severity classification summary
+- chosen resolution strategy
+- files changed
+- validation outcome
+- remaining blockers
+
+### Parent / Subagent Split
+
+#### Parent agent owns
+
+- overall severity decision
+- coordination with work item status
+- decision to keep fixing vs. revert to `in_progress`
+- reviewer coordination and re-requesting review
+- final summary
+
+#### Subagents own
+
+- one feedback thread at a time
+- one CI failure at a time
+- one narrow code/doc/test fix at a time
+- compact summaries of findings and changes
+
+### Output Contract for Subagents
+
+Each subagent should return a minimal report containing only:
+
+- issue addressed
+- severity
+- root cause
+- files changed
+- validation performed
+- unresolved risks
+
+Do not paste full logs, large diffs, or full comment threads back into the parent context unless they are required for a decision.
+
+## Orchestrator Compatibility
+
+This skill should remain closed for modification and open for extension.
+
+- Do not encode assumptions about a specific upstream orchestrator.
+- Do not reference specific caller workflows by name.
+- Expose a stable coordination pattern that any upstream skill can reuse.
+- Let upstream skills decide when and why this feedback loop is invoked.
+
+When composed by an upstream skill, this skill should behave as:
+
+- a feedback triage and resolution coordinator
+- a compact-state reducer for verbose review loops
+- a reusable severity-to-action decision engine
 
 ## When to Use
 
-Handle PR feedback when:
+Use this skill when:
 
-- PR has unresolved review comments or requested changes
-- Feedback arrives after initial submission
-- Need to decide: address inline fixes vs. major rework
-- Want to maintain synchronization between PR state and work item status
-- Preparing for subsequent review rounds
+- a PR has unresolved review comments or requested changes
+- CI failures must be interpreted alongside reviewer feedback
+- the next step is unclear: inline fix, broader rework, or revert to `in_progress`
+- PR status and work item status must remain synchronized
+- subsequent review rounds need a compact feedback summary
 
 ## When NOT to Use
 
-Skip this skill for:
+Skip this skill when:
 
-- PR just created, awaiting initial review (wait for feedback first)
-- Already-merged PRs (use `finalizing-work-item` instead)
-- Complex architectural feedback requiring discussion (use collaborative mode and escalate)
+- a PR is awaiting initial review with no actionable feedback yet
+- a PR is already merged or definitively abandoned
+- the work is still in local development and has not entered PR review
+- the problem is architectural discovery rather than feedback resolution
 
 ## Feedback Triage System
 
 ### Comment Classification
 
-Comments are classified by severity and required action:
-
-| Severity     | Type                             | Requires           | Auto-Fix    | Revert | Example                               |
-| ------------ | -------------------------------- | ------------------ | ----------- | ------ | ------------------------------------- |
-| **Trivial**  | Typo, formatting, comment        | Inline fix         | ✅ Yes      | ❌ No  | Spelling error in variable name       |
-| **Minor**    | Documentation, test expectations | Code change        | ✅ Optional | ❌ No  | Add docstring, clarify test           |
-| **Moderate** | Logic refinement, optimization   | Code change        | ❌ Manual   | ❌ No  | "Consider using map instead of loop"  |
-| **Major**    | Incorrect approach, design flaw  | Significant rework | ❌ Manual   | ✅ Yes | "This violates our decorator pattern" |
-| **Blocker**  | Architectural, breaking change   | Scope change       | ❌ Escalate | ✅ Yes | "Doesn't comply with RFC-007"         |
+| Severity     | Type                           | Requires                  | Auto-Fix    | Revert | Example                 |
+| ------------ | ------------------------------ | ------------------------- | ----------- | ------ | ----------------------- |
+| **Trivial**  | Typo, formatting, comment      | Inline change             | ✅ Yes      | ❌ No  | Spelling error          |
+| **Minor**    | Documentation, tests, metadata | Small code/doc change     | ✅ Optional | ❌ No  | Add docstring           |
+| **Moderate** | Logic refinement               | Focused code change       | ❌ Manual   | ❌ No  | Suggest refactor        |
+| **Major**    | Design flaw                    | Significant rework        | ❌ Manual   | ✅ Yes | Violates design pattern |
+| **Blocker**  | Architectural or policy issue  | Scope or direction change | ❌ Escalate | ✅ Yes | Violates RFC            |
 
 ### Decision Tree
 
 ```asciiflow
 Comment Received
-├─ Severity: Trivial or Minor?
-│  └─ YES → resolve-pr-comments (auto-fix or prompt)
-│     ├─ Success → Mark thread resolved
-│     └─ Conflict → Notify reviewer, manual fix
-├─ Severity: Moderate?
-│  └─ YES → Notify developer, manual fix
-│     └─ Requires design discussion? → Escalate in collaborative mode
-├─ Severity: Major or Blocker?
-│  └─ YES → Decision point
-│     ├─ Can refactor without scope change? → Manual fix, keep testing status
-│     └─ Requires scope change? → Revert to in_progress
-│        ├─ updating-work-item (testing → in_progress)
-│        ├─ feature-branch-management sync (rebase if main changed)
-│        └─ Rescope work in notes
+├─ Trivial/Minor → Fix inline → Validate → Resolve thread / respond → Re-request review
+├─ Moderate → Focused fix or discussion → Validate → Re-request review
+└─ Major/Blocker
+   ├─ Can refactor safely within scope → Fix + validate
+   └─ Requires scope change or broader redesign → Revert to in_progress / escalate
 ```
 
-## Workflow: Handling Feedback
+## Workflow
+
+### Execution Strategy
+
+Run the feedback loop as a coordinator.
+
+- Use the parent agent for triage, status decisions, and reviewer coordination.
+- Use subagents for focused analysis and fixes.
+- After each subagent pass, merge back only the compact result needed to decide the next step.
+- Prefer one subagent per review thread or CI failure, and discard subagent-local detail once the compact summary has been merged into parent state.
 
 ### Phase 1: Fetch and Analyze
 
-1. **Fetch PR Details**
+1. Fetch PR details, unresolved comments, requested changes, and failing checks.
+2. Categorize comments by severity and topic.
+   - Prefer a subagent to summarize comments into compact severity/topic clusters.
+3. Assess impact:
+   - blocker vs. non-blocker
+   - code vs. docs vs. tests vs. policy
+   - isolated fix vs. broader rework
 
-   ```bash
-   # Via pull-request-tool: Fetch PR details, reviews, comments
-   pr_details = pull-request-tool.fetch(pr_number)
-   comments = pull-request-tool.list_comments(pr_number, filter=unresolved)
-   reviews = pull-request-tool.fetch_reviews(pr_number)
-   ```
+### Phase 2: Decide Resolution Strategy
 
-2. **Categorize Comments**
-   - Extract severity from comment content (manual, or via NLP heuristics)
-   - Group by severity and topic
-   - Identify blockers vs. nice-to-have
+Choose the smallest safe path.
 
-3. **Assess Impact**
-   - Count of trivial/minor vs. major/blocker comments
-   - Do blockers represent scope change or design issue?
-   - Can work proceed incrementally or does rework need full reset?
-
-### Phase 2: Decision
-
-Make decision based on feedback distribution:
-
-#### Option A: Minor Feedback Only
-
-- Proceed with inline fixes via `resolve-pr-comments`
-- Keep work item in `testing` status
-- Update PR with fixes, re-request review
-
-#### Option B: Mixed (Minor + Moderate)
-
-- Resolve minor items automatically or manually
-- Address moderate items with discussion (collaborative mode)
-- Keep work item in `testing` but notify reviewer of changes
-- Plan for follow-up review round
-
-#### Option C: Major/Blocker Feedback
-
-- Revert work item to `in_progress`
-- Notify developer of scope change
-- Update work item notes with feedback details
-- Schedule rework session
+- **Trivial / Minor** → resolve inline when safe.
+- **Moderate** → apply a focused fix and validate.
+- **Major / Blocker** → decide whether to rework immediately or revert work item status to `in_progress` and escalate.
+- **Mixed feedback** → resolve blockers first, then revisit non-blocking comments.
 
 ### Phase 3: Execute Resolution
 
-#### If Minor Feedback (Option A)
+For each resolution pass, prefer spawning a focused subagent for the smallest independent unit of work rather than carrying all review detail in the parent context.
 
-```yaml
-# Step 1: Auto-resolve trivial comments
-resolve-pr-comments pr_number=247 severity=trivial auto_resolve=true
+Per pass:
 
-# Step 2: Push fixes
-git add -A
-git commit -m "docs: address review feedback"
-git push origin feature/60-filter-adapter
-
-# Step 3: Mark threads resolved
-pull-request-tool resolve threads=<ids>
-
-# Step 4: Re-request review
-pull-request-tool request-review pr_number=247
-
-# Step 5: Keep work item in testing
-# (No status change needed)
-```
-
-#### If Moderate Feedback (Option B)
-
-```yaml
-# Step 1: Resolve trivial items automatically
-resolve-pr-comments pr_number=247 severity=trivial auto_resolve=true
-
-# Step 2: Collaborative resolution for moderate items
-resolve-pr-comments pr_number=247 severity=moderate interaction=collaborative
-
-# Step 3: Push all fixes
-git add -A
-git commit -m "feat: address review feedback and refinements"
-git push origin feature/60-filter-adapter
-
-# Step 4: Update work item with changes
-updating-work-item id=60 \
-  status=testing \
-  notes="Addressed review feedback: optimized filter logic, improved test coverage"
-
-# Step 5: Re-request review
-pull-request-tool request-review pr_number=247
-```
-
-#### If Major/Blocker Feedback (Option C)
-
-```yaml
-# Step 1: Notify developer
-# (In collaborative mode, ask permission to revert)
-
-# Step 2: Revert work item to in_progress
-updating-work-item id=60 \
-  status=in_progress \
-  notes="PR feedback: Design violates decorator pattern (Reviewer: @alice).
-         Requires rework. See PR #247 for details.
-         Plan: Refactor FilterAdapter to use composition instead of inheritance."
-
-# Step 3: Sync branch
-feature-branch-management sync --base=main
-
-# Step 4: Create issue or note for rework
-# (Can create linked issue for the refactoring)
-
-# Step 5: Notify reviewer of revert
-pull-request-tool reply \
-  comment_id=<feedback_comment> \
-  body="Thanks for the feedback! Reverting to in_progress to refactor approach.
-        Will resubmit for review once changes are complete."
-```
+1. Select the highest-priority unresolved item.
+2. Delegate focused investigation or implementation.
+3. Apply the fix.
+4. Run the narrowest validation needed.
+5. Update the PR or review thread state.
+6. Reassess remaining feedback.
 
 ### Phase 4: Finalize
 
-After fixes are pushed:
+When the pass is complete:
 
-```yaml
-# Option: Auto re-request review (if using CI auto-merge)
-pull-request-tool request-review pr_number=247
-# Option: Notify team in notes
-# (Work item notes now reflect latest feedback status)
+- summarize what changed
+- note validation results
+- identify remaining blockers, if any
+- decide whether to re-request review, continue another pass, or revert/escalate
 
-# Next: Wait for follow-up review
-# Then: Return to Phase 1 if more feedback, or proceed to merge
-```
+## Interaction Modes
 
-## Interaction Modes (Aspect)
+Uses `interaction-modes` aspect.
 
-This skill uses the interaction-modes aspect for decision handling.
-
-- Aspect: [interaction-modes](../../aspects/interaction-modes/ASPECT.md)
-- Decision point: `feedback_severity`
-- Parameter: `interaction-mode` = yolo | collaborative
-
-## Options
-
-### Filtering
-
-- `severity`: Severity filter (all, trivial, minor, moderate, major, blocker)
-  - Default: all unresolved
-  - Example: `severity=minor` processes only trivial + minor comments
-
-- `reviewer`: Filter comments by specific reviewer
-  - Default: all reviewers
-  - Example: `reviewer=@alice` processes only Alice's feedback
-
-### Auto-Fixing
-
-- `auto_fix_trivial`: Automatically fix typos and formatting
-  - Default: true
-  - Requires branch write access
-
-- `auto_resolve_minor`: Automatically attempt minor fixes
-  - Default: false
-  - Riskier; may need manual review
-
-### Thresholds
-
-- `blocker_revert_threshold`: Number of blocker comments to trigger revert
-  - Default: 1 (any blocker reverts)
-  - Example: `blocker_revert_threshold=2` requires 2+ blockers
-
-- `major_discussion_threshold`: Number of major items before escalating to discussion
-  - Default: 2
-  - Prevents "death by a thousand cuts"
-
-## Integration with Work Item Status
-
-### Status Transitions Triggered
-
-```yaml
-# Normal flow:
-testing → testing (minor fixes)
-testing → in_progress (major feedback, revert for rework)
-
-# After rework:
-in_progress → testing (new fixes pushed, re-requests review)
-```
-
-### Notes Field Updates
-
-```yaml
-# Example annotation after feedback:
-notes:
-  - timestamp: 2024-06-01T12:00:00Z
-    user: @john
-    note: |
-      ## Review Feedback (Round 1)
-
-      **Minor Issues Addressed:**
-      - Fixed docstring typos in FilterAdapter.map()
-      - Added test for edge case with empty sequences
-      - Improved error message clarity
-
-      **Blocker Feedback (Reverted):**
-      - Reviewer raised: "Doesn't follow decorator pattern"
-      - Decision: Refactor FilterAdapter to use composition
-      - Branch: feature/60-refactor-adapter
-      - Status: Reworking
-```
-
-## Error Handling
-
-### Cannot Classify Comment Severity
-
-```yaml
-error: "Cannot auto-classify comment severity"
-comment: "The impl looks good but let me check the pattern matching part"
-action: "Manual review required; ask reviewer for explicit severity label or escalate"
-```
-
-## PR Comment Severity Labels (Optional Enhancement)
-
-GitHub labels can help mark comment severity:
-
-```yaml
-# Labels to add to work item or PR:
-labels:
-  - severity/trivial # Typo, formatting
-  - severity/minor # Docs, test expectations
-  - severity/moderate # Logic refinement
-  - severity/major # Design issue
-  - severity/blocker # Architectural violation
-```
-
-Reviewers can label their comments. handle-pr-feedback reads these labels for better classification.
-
-### Exception Handling
-
-#### PR Not Found
-
-```yaml
-error: "PR #247 not found"
-action: "Verify PR number is correct"
-hint: "use pull-request-tool list to find PR number"
-```
-
-#### Branch Deleted
-
-```yaml
-error: "Branch feature/60-filter-adapter has been deleted"
-action: "Cannot sync branch; work item revert would be manual"
-hint: "recreate branch from last known commit, or file manual issue"
-```
-
-#### Conflicting Feedback
-
-```yaml
-warning: "Comment from reviewer 1 conflicts with comment from reviewer 2"
-comment_1: "Use list comprehension for clarity"
-comment_2: "Use functional map() for consistency"
-action: "Require discussion in collaborative mode; escalate if unresolved"
-```
-
-## Related Skills
-
-See the dependency matrix in [docs/SKILL_COMPOSITION.md](docs/SKILL_COMPOSITION.md#skill-dependency-matrix) for the canonical calling relationships.
-
-- **`pull-request-tool`**: Fetch PR details, comments, reviews (via PR_MANAGEMENT_INTERFACE)
-- **`resolve-pr-comments`**: Execute comment fixes and resolutions
-- **`updating-work-item`**: Revert work item status and record feedback
-- **`feature-branch-management`**: Sync branch during rework
-- **`process-pr`**: Full PR workflow (includes feedback loop via handle-pr-feedback)
-
-## Workflow Integration
-
-### Part of process-pr
-
-`handle-pr-feedback` is invoked by `process-pr` in **Stage 3: Address Feedback**:
-
-```yaml
-process-pr pr_number=247
-├─ Stage 1: Assessment (fetch PR, check reviews)
-├─ Stage 2: Local verification (optional)
-├─ Stage 3: Address Feedback ← handle-pr-feedback is called here
-│  └─ handle-pr-feedback pr_number=247
-│     ├─ Fetch comments
-│     ├─ Classify severity
-│     ├─ Auto-fix or revert as needed
-│     └─ Report changes
-├─ Stage 4: Final verification
-├─ Stage 5: Merge
-└─ Stage 6: Post-merge cleanup
-```
-
-### Can Be Used Standalone
-
-For manual PR feedback handling:
-
-```bash
-handle-pr-feedback pr_number=247 interaction=collaborative
-```
+- `yolo`: triage and resolve low-risk feedback automatically
+- `collaborative`: pause for ambiguity, moderate/major tradeoffs, or policy conflicts
 
 ## Tips & Best Practices
 
-### 1. Encourage Structured Feedback
+### 1. Keep Context Slim with Subagents
 
-Ask reviewers to follow pattern:
+Use subagents to investigate and resolve one feedback cluster at a time.
+
+Good parent-context summary:
+
+```yaml
+feedback_round: 2
+blocking_items:
+  - missing changeset
+  - failing integration test
+minor_items:
+  - docstring clarification
+next_action: fix blocking items, then re-request review
+```
+
+Avoid carrying:
+
+- full CI logs
+- full diff hunks
+- every inline review comment verbatim
+- repeated copies of unchanged PR state
+
+### 2. Encourage Structured Feedback
+
+Structured feedback improves triage quality and automation.
+
+Example pattern:
 
 ```markdown
 **[SEVERITY: BLOCKER]** Design violates RFC-007
@@ -405,94 +249,20 @@ Suggestion: Refactor to use decorator pattern
 Priority: Must fix before merge
 ```
 
-Enables better automation of triage.
+### 3. Escalate Early
 
-### 2. Set Feedback Expectations
+If feedback suggests scope mismatch or policy conflict, escalate early instead of thrashing through repeated partial fixes.
 
-Document in CONTRIBUTING.md:
+### 4. Document Decisions
 
-```markdown
-## Review Comment Severity
+Capture major decisions in work item notes or PR summaries so later passes do not need to reconstruct prior reasoning.
 
-- **Trivial**: Typos, formatting. Author may auto-fix.
-- **Minor**: Docs, tests. Author fixes before merge.
-- **Moderate**: Logic refinement. Discuss if time is constrained.
-- **Major**: Design issue. Requires rework before merge.
-- **Blocker**: Architectural violation. Reverts PR for rework.
-```
+## Summary
 
-### 3. Use Labels for Clarity
+This skill provides a reusable, orchestrator-agnostic feedback loop that:
 
-```markdown
-Label comments with severity:
-
-- `[trivial]` Typo in variable name
-- `[minor]` Add docstring
-- `[major]` Doesn't follow pattern
-```
-
-### 4. Escalate Early
-
-If feedback suggests scope creep, escalate to product/architecture:
-
-```yaml
-# In collaborative mode:
-> Multiple blockers suggest scope mismatch.
-> Escalate to architecture review? [Y/n]
-```
-
-Prevents code thrashing from misaligned expectations.
-
-### 5. Document Decisions
-
-In work item notes, record feedback and decision:
-
-```yaml
-notes:
-  - timestamp: 2024-06-01T12:00:00Z
-    user: @john
-    note: |
-      ## Review Feedback
-
-      **Concern**: "Filter logic doesn't handle None values"
-      **Decision**: Add filter(None) pass; document in ADAPTER_SPEC.md
-      **Status**: Fixed and re-requested review
-```
-
-## Common Scenarios
-
-### Scenario A: One Round of Minor Fixes
-
-```markdown
-1. PR submitted, reviewer approves with minor comments
-2. handle-pr-feedback auto-fixes trivial issues
-3. Changes pushed, reviewer re-requested
-4. All approved, merge via process-pr
-```
-
-### Scenario B: Feedback Leads to Rework
-
-```markdown
-1. PR submitted, reviewer requests major redesign
-2. handle-pr-feedback reverts work item to in_progress
-3. Developer reworks architecture
-4. New branch/PR created
-5. Reviewer approves second round
-6. Merge via process-pr
-```
-
-### Scenario C: Conflicting Feedback
-
-```markdown
-1. PR submitted, reviewers disagree on approach
-2. handle-pr-feedback escalates to discussion (collaborative)
-3. Team discusses in comment thread or sync meeting
-4. Decision made, developer implements
-5. Re-submit for review
-```
-
-## References
-
-- GitHub PR Comments API: <https://docs.github.com/en/rest/reference/pulls#comments>
-- Review Comments: <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-a-pull-request/about-pull-request-reviews>
-- PR_MANAGEMENT_INTERFACE: See tools/PR_MANAGEMENT_INTERFACE.md
+- triages PR feedback
+- resolves low-risk issues efficiently
+- identifies when broader rework is required
+- minimizes context bloat
+- composes cleanly with higher-level workflows
