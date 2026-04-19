@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -28,6 +29,8 @@ ALLOWED_CONFIRMATION_SOURCES = {
 }
 EFFORT_ORDER = {"s": 0, "m": 1, "l": 2}
 RISK_ORDER = {"low": 0, "med": 1, "medium": 1, "high": 2}
+SCORER_VERSION = "1.3.0"
+RULES_VERSION = "2026-04-18"
 
 
 def _to_float(value: Any, field: str) -> float:
@@ -195,6 +198,11 @@ def _normalize_alternatives(
         seen_ids.add(alt_id)
 
         name = str(alt.get("name", alt_id)).strip() or alt_id
+        alt_type = str(alt.get("type", "internal")).strip()
+        if alt_type not in {"internal", "compose", "external", "build-new"}:
+            raise ValueError(
+                f"alternatives[{index}].type must be one of internal|compose|external|build-new"
+            )
         effort = str(alt.get("effort", "")).strip()
         risk = str(alt.get("risk", "")).strip()
         justification = str(alt.get("justification", "")).strip()
@@ -205,21 +213,62 @@ def _normalize_alternatives(
         if not isinstance(scores, dict):
             raise ValueError(f"alternatives[{index}].scores must be an object")
 
+        evidence = alt.get("evidence", [])
+        if evidence is None:
+            evidence = []
+        if not isinstance(evidence, list):
+            raise ValueError(f"alternatives[{index}].evidence must be an array when provided")
+
         feasible = bool(alt.get("feasible", True))
         normalized.append(
             {
                 "id": alt_id,
                 "name": name,
+                "type": alt_type,
                 "effort": effort,
                 "risk": risk,
                 "feasible": feasible,
                 "scores": scores,
+                "evidence": evidence,
                 "justification": justification,
                 "notes": alt.get("notes", ""),
             }
         )
 
     return normalized
+
+
+def _normalize_discovery(
+    discovery: Any,
+    alternatives: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(discovery, dict):
+        raise ValueError("discovery object is required")
+
+    external_done = bool(discovery.get("external_discovery_done", False))
+    external_blocked = bool(discovery.get("external_discovery_blocked", False))
+    block_reason = str(discovery.get("block_reason", "")).strip()
+    checked_at = str(discovery.get("checked_at", "")).strip()
+
+    if not external_done and not external_blocked:
+        raise ValueError(
+            "discovery must either complete external discovery or explicitly block it with reason"
+        )
+    if external_blocked and not block_reason:
+        raise ValueError("discovery.block_reason is required when external discovery is blocked")
+
+    has_external = any(alt["type"] == "external" for alt in alternatives)
+    if external_done and not has_external:
+        raise ValueError(
+            "external discovery was marked complete but no alternative with type 'external' was provided"
+        )
+
+    return {
+        "external_discovery_done": external_done,
+        "external_discovery_blocked": external_blocked,
+        "block_reason": block_reason,
+        "checked_at": checked_at,
+    }
 
 
 def _normalize_independent_evaluations(
@@ -468,6 +517,14 @@ def _recommend(
     }
 
 
+def _decision_status(action: str) -> str:
+    if action in {"select", "compose", "extend", "build-new"}:
+        return "proceed"
+    if action == "improve":
+        return "defer"
+    return "no-go"
+
+
 def _evaluate(
     data: dict[str, Any],
     *,
@@ -479,6 +536,9 @@ def _evaluate(
         str(data.get("decision", "Comparative decision analysis")).strip()
         or "Comparative decision analysis"
     )
+    run_id = str(data.get("run_id", "")).strip()
+    if not run_id:
+        run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     criteria_confirmed = data.get("criteria_confirmed")
     criteria_confirmation_source = _normalize_confirmation_source(
         criteria_confirmed=criteria_confirmed,
@@ -503,6 +563,7 @@ def _evaluate(
         data.get("alternatives"),
         allow_single_option=allow_single_option,
     )
+    discovery = _normalize_discovery(data.get("discovery"), alternatives)
     independent_evaluations = _normalize_independent_evaluations(
         data.get("independent_evaluations"),
         alternatives,
@@ -540,6 +601,7 @@ def _evaluate(
             {
                 "id": alternative["id"],
                 "name": alternative["name"],
+                "type": alternative["type"],
                 "effort": alternative["effort"],
                 "risk": alternative["risk"],
                 "effort_rank": _effort_rank(alternative["effort"]),
@@ -573,14 +635,21 @@ def _evaluate(
         item["rank"] = rank
 
     recommendation = _recommend(ranked, rules)
+    action = recommendation["action"]
     return {
+        "run_id": run_id,
+        "scorer_version": SCORER_VERSION,
+        "rules_version": RULES_VERSION,
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "decision": decision,
+        "decision_status": _decision_status(action),
         "criteria_confirmed": bool(criteria_confirmed),
         "criteria_confirmation_source": criteria_confirmation_source,
         "score_scale": score_scale,
         "current_platform": current_platform,
         "major_platforms": major_platforms,
         "criteria": criteria,
+        "discovery": discovery,
         "independent_evaluations": independent_evaluations,
         "weights": blend,
         "ranked_alternatives": ranked,
@@ -594,6 +663,10 @@ def _markdown_report(result: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Inputs")
     lines.append("")
+    lines.append(f"- Run id: `{result['run_id']}`")
+    lines.append(f"- Scorer version: `{result['scorer_version']}`")
+    lines.append(f"- Rules version: `{result['rules_version']}`")
+    lines.append(f"- Evaluated at: `{result['evaluated_at']}`")
     lines.append(f"- Criteria confirmed: `{result['criteria_confirmed']}`")
     lines.append(
         f"- Criteria confirmation source: `{result['criteria_confirmation_source']}`"
@@ -605,6 +678,12 @@ def _markdown_report(result: dict[str, Any]) -> str:
         "- Independent evaluations recorded: "
         f"`{len(result['independent_evaluations'])}`"
     )
+    lines.append(
+        "- External discovery: "
+        f"done=`{result['discovery']['external_discovery_done']}` blocked=`{result['discovery']['external_discovery_blocked']}`"
+    )
+    if result["discovery"]["block_reason"]:
+        lines.append(f"- Discovery block reason: {result['discovery']['block_reason']}")
     lines.append("")
     lines.append("## Criteria")
     lines.append("")
@@ -619,13 +698,13 @@ def _markdown_report(result: dict[str, Any]) -> str:
     lines.append("## Ranked Alternatives")
     lines.append("")
     lines.append(
-        "| Rank | Option | Feasible | Effort | Risk | Major Avg | "
+        "| Rank | Option | Type | Feasible | Effort | Risk | Major Avg | "
         f"Current ({result['current_platform']}) | Overall | Coverage | Missing | Justification |"
     )
-    lines.append("|---:|---|---|---|---|---:|---:|---:|---:|---:|---|")
+    lines.append("|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---|")
     for item in result["ranked_alternatives"]:
         lines.append(
-            f"| {item['rank']} | {item['name']} (`{item['id']}`) | "
+            f"| {item['rank']} | {item['name']} (`{item['id']}`) | {item['type']} | "
             f"{'yes' if item['feasible'] else 'no'} | {item['effort'] or '-'} | {item['risk'] or '-'} | "
             f"{item['major_platform_average']:.2f} | {item['current_platform_score']:.2f} | "
             f"{item['overall_success_score']:.2f} | {item['coverage']:.3f} | {item['missing_values']} | "
@@ -649,6 +728,7 @@ def _markdown_report(result: dict[str, Any]) -> str:
     lines.append("")
     rec = result["recommendation"]
     chosen = ", ".join(rec["chosen_option_ids"]) if rec["chosen_option_ids"] else "none"
+    lines.append(f"- Decision status: `{result['decision_status']}`")
     lines.append(f"- Action: **{rec['action']}**")
     lines.append(f"- Chosen option(s): `{chosen}`")
     lines.append(f"- Top option: `{rec['top_option_id']}`")

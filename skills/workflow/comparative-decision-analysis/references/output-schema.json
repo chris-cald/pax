@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://templjs.local/skills/hybrid-decision-analysis/references/output.schema.json",
-  "title": "Hybrid Decision Analysis Output",
+  "$id": "https://pax.local/skills/workflow/comparative-decision-analysis/output-schema.json",
+  "title": "Comparative Decision Analysis Output",
+  "description": "Canonical output contract for score_with_guardrails.py.",
   "type": "object",
-  "additionalProperties": false,
   "required": [
     "run_id",
     "scorer_version",
@@ -12,10 +12,13 @@
     "decision",
     "decision_status",
     "criteria_confirmed",
+    "criteria_confirmation_source",
     "score_scale",
     "current_platform",
     "major_platforms",
     "criteria",
+    "discovery",
+    "independent_evaluations",
     "weights",
     "ranked_alternatives",
     "recommendation"
@@ -48,6 +51,15 @@
     "criteria_confirmed": {
       "type": "boolean"
     },
+    "criteria_confirmation_source": {
+      "type": "string",
+      "enum": [
+        "user-confirmed",
+        "provided-input",
+        "yolo-mode",
+        "simulation-unconfirmed"
+      ]
+    },
     "score_scale": {
       "type": "string",
       "enum": ["0-100", "1-5"]
@@ -69,8 +81,14 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "name", "weight", "metric", "data_source", "scoring_rule"],
+        "required": [
+          "id",
+          "name",
+          "weight",
+          "metric",
+          "data_source",
+          "scoring_rule"
+        ],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "name": { "type": "string", "minLength": 1 },
@@ -78,24 +96,64 @@
           "metric": { "type": "string", "minLength": 1 },
           "data_source": { "type": "string", "minLength": 1 },
           "scoring_rule": { "type": "string", "minLength": 1 }
-        }
+        },
+        "additionalProperties": false
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "required": [
+        "external_discovery_done",
+        "external_discovery_blocked",
+        "block_reason",
+        "checked_at"
+      ],
+      "properties": {
+        "external_discovery_done": { "type": "boolean" },
+        "external_discovery_blocked": { "type": "boolean" },
+        "block_reason": { "type": "string" },
+        "checked_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "independent_evaluations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "alternative_id",
+          "evaluator_id",
+          "isolation_confirmed",
+          "summary",
+          "evidence_refs"
+        ],
+        "properties": {
+          "alternative_id": { "type": "string", "minLength": 1 },
+          "evaluator_id": { "type": "string", "minLength": 1 },
+          "isolation_confirmed": { "type": "boolean" },
+          "summary": { "type": "string", "minLength": 1 },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "additionalProperties": false
       }
     },
     "weights": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["major_platform_average", "current_platform"],
       "properties": {
         "major_platform_average": { "type": "number", "minimum": 0 },
         "current_platform": { "type": "number", "minimum": 0 }
-      }
+      },
+      "additionalProperties": false
     },
     "ranked_alternatives": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "additionalProperties": false,
         "required": [
           "id",
           "name",
@@ -107,13 +165,13 @@
           "rank",
           "feasible",
           "justification",
+          "platform_scores",
           "major_platform_average",
           "current_platform_score",
           "overall_success_score",
           "coverage",
           "count_coverage",
           "missing_values",
-          "platform_scores",
           "notes"
         ],
         "properties": {
@@ -130,26 +188,24 @@
           "rank": { "type": "integer", "minimum": 1 },
           "feasible": { "type": "boolean" },
           "justification": { "type": "string", "minLength": 1 },
+          "platform_scores": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": { "type": "number" }
+          },
           "major_platform_average": { "type": "number" },
           "current_platform_score": { "type": "number" },
           "overall_success_score": { "type": "number" },
           "coverage": { "type": "number", "minimum": 0, "maximum": 1 },
           "count_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
           "missing_values": { "type": "integer", "minimum": 0 },
-          "platform_scores": {
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": {
-              "type": "number"
-            }
-          },
           "notes": { "type": "string" }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "recommendation": {
       "type": "object",
-      "additionalProperties": false,
       "required": [
         "action",
         "chosen_option_ids",
@@ -161,7 +217,7 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["select", "compose", "improve", "extend", "build-new", "no-go"]
+          "enum": ["select", "compose", "improve", "extend", "build-new"]
         },
         "chosen_option_ids": {
           "type": "array",
@@ -180,11 +236,11 @@
         },
         "rules": {
           "type": "object",
-          "additionalProperties": {
-            "type": "number"
-          }
+          "additionalProperties": { "type": "number" }
         }
-      }
+      },
+      "additionalProperties": false
     }
-  }
+  },
+  "additionalProperties": false
 }

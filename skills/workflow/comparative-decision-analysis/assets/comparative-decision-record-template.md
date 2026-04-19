@@ -16,17 +16,17 @@
 
 ## Confirmed Criteria
 
-| Criterion | Weight | Metric | Data Source | Scoring Rule |
-| --- | ---: | --- | --- | --- |
-| `<criterion-1>` | `<0.xx or N>` | `<metric>` | `<source>` | `<rule>` |
+| Criterion       |        Weight | Metric     | Data Source | Scoring Rule |
+| --------------- | ------------: | ---------- | ----------- | ------------ |
+| `<criterion-1>` | `<0.xx or N>` | `<metric>` | `<source>`  | `<rule>`     |
 
 ## Alternatives
 
 Record every discovered alternative in this table (do not omit lower-ranked options).
 
-| Rank | Option | Feasible | Major Platform Avg | Current Platform Score | Overall Success | Action Hint | Justification |
-| ---: | --- | --- | ---: | ---: | ---: | --- | --- |
-| 1 | `<option>` | `<yes/no>` | `<score>` | `<score>` | `<score>` | `<select/improve/extend/compose/build-new>` | `<explicit option-level rationale>` |
+| Rank | Option     | Feasible   | Major Platform Avg | Current Platform Score | Overall Success | Action Hint                                 | Justification                       |
+| ---: | ---------- | ---------- | -----------------: | ---------------------: | --------------: | ------------------------------------------- | ----------------------------------- |
+|    1 | `<option>` | `<yes/no>` |          `<score>` |              `<score>` |       `<score>` | `<select/improve/extend/compose/build-new>` | `<explicit option-level rationale>` |
 
 ## Discovery Log
 
@@ -36,6 +36,7 @@ Record every discovered alternative in this table (do not omit lower-ranked opti
 
 ## Recommendation
 
+- Decision status: `<proceed|defer|no-go>`
 - Action: `<select|improve|extend|compose|build-new>`
 - Chosen option(s): `<ids>`
 - Justification: `<include score deltas and feasibility>`

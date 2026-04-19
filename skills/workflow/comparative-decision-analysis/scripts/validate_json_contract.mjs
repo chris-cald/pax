@@ -7,16 +7,16 @@ import addFormats from "ajv-formats";
 
 function parseArgs(argv) {
   const args = { schema: "", data: "" };
-  for (let i = 2; i < argv.length; i += 1) {
-    const arg = argv[i];
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
     if (arg === "--schema") {
-      args.schema = argv[i + 1] ?? "";
-      i += 1;
+      args.schema = argv[index + 1] ?? "";
+      index += 1;
       continue;
     }
     if (arg === "--data") {
-      args.data = argv[i + 1] ?? "";
-      i += 1;
+      args.data = argv[index + 1] ?? "";
+      index += 1;
       continue;
     }
   }
@@ -28,11 +28,11 @@ function parseArgs(argv) {
 
 async function main() {
   const { schema, data } = parseArgs(process.argv);
-
   const [schemaRaw, dataRaw] = await Promise.all([
     fs.readFile(schema, "utf8"),
     fs.readFile(data, "utf8"),
   ]);
+
   const schemaJson = JSON.parse(schemaRaw);
   const dataJson = JSON.parse(dataRaw);
 
@@ -53,7 +53,7 @@ async function main() {
   console.log("valid");
 }
 
-main().catch((err) => {
-  console.error(err.message);
+main().catch((error) => {
+  console.error(error.message);
   process.exit(1);
 });

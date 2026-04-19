@@ -47,6 +47,7 @@ Produce a defensible decision by combining:
    - Run evaluator subagents in parallel when possible.
    - Keep evaluator contexts isolated; do not let evaluators see each other outputs.
 7. Prepare input using `references/input-schema.md` and `references/input-schema.json`.
+   - Include discovery state under `discovery`.
    - Include one `independent_evaluations` record per alternative.
 8. Execute deterministic harness:
 
@@ -59,6 +60,7 @@ Produce a defensible decision by combining:
 9. Run reliability checks.
    - Use `references/scenario-bakeoff-protocol.md` for bakeoff evaluation.
    - Run sensitivity checks for close results.
+   - Validate the generated result against `references/output-schema.json`.
 10. Produce record using `assets/comparative-decision-record-template.md`.
 
 ## Guardrails
@@ -75,6 +77,12 @@ Run guardrail tests before relying on scoring or harness changes:
 
 ```bash
 python3 test/skills/workflow/comparative-decision-analysis/test_score_with_guardrails.py
+node skills/workflow/comparative-decision-analysis/scripts/validate_json_contract.mjs \
+   --schema skills/workflow/comparative-decision-analysis/references/input-schema.json \
+   --data <analysis-input.json>
+node skills/workflow/comparative-decision-analysis/scripts/validate_json_contract.mjs \
+   --schema skills/workflow/comparative-decision-analysis/references/output-schema.json \
+   --data <analysis-result.json>
 ```
 
 ## References
@@ -82,6 +90,8 @@ python3 test/skills/workflow/comparative-decision-analysis/test_score_with_guard
 - **Discovery**: `../discovering-alternatives/SKILL.md` (primary), `references/discovery-protocol.md` (legacy fallback)
 - Input contract: `references/input-schema.md`
 - Machine-readable schema: `references/input-schema.json`
+- Output contract: `references/output-schema.md`
+- Machine-readable output schema: `references/output-schema.json`
 - Rubric packs: `references/rubric-packs.md`
 - Quality gates: `references/quality-gates.md`
 - Bakeoff protocol: `references/scenario-bakeoff-protocol.md`
@@ -97,12 +107,11 @@ python3 test/skills/workflow/comparative-decision-analysis/test_score_with_guard
 
 **Downstream (Selection Phase)**:
 
-- [[hybrid-decision-analysis]]: Evaluates hybrid build+buy approaches after comparative analysis completes
 - [[evaluating-alternative]]: Deep-dive evaluation of a single option (useful for top-ranked alternatives)
 
 **Workflow Sequence**:
 
 ```text
-1. discovering-alternatives → 2. comparative-decision-analysis → 3. [hybrid-decision-analysis | evaluating-alternative]
-   (exhaustive discovery)       (criteria-based scoring)            (deep dive or hybrid exploration)
+1. discovering-alternatives → 2. comparative-decision-analysis → 3. evaluating-alternative
+   (exhaustive discovery)       (criteria-based scoring)            (deep dive on the preferred option)
 ```

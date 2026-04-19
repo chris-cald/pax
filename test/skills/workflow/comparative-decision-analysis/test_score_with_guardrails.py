@@ -16,6 +16,18 @@ SCRIPT = (
     REPO_ROOT
     / "skills/workflow/comparative-decision-analysis/scripts/score_with_guardrails.py"
 )
+VALIDATOR = (
+    REPO_ROOT
+    / "skills/workflow/comparative-decision-analysis/scripts/validate_json_contract.mjs"
+)
+INPUT_SCHEMA = (
+    REPO_ROOT
+    / "skills/workflow/comparative-decision-analysis/references/input-schema.json"
+)
+OUTPUT_SCHEMA = (
+    REPO_ROOT
+    / "skills/workflow/comparative-decision-analysis/references/output-schema.json"
+)
 
 
 def _run(input_data: dict[str, Any], extra_args: list[str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, Any] | None]:
@@ -48,11 +60,18 @@ def _run(input_data: dict[str, Any], extra_args: list[str] | None = None) -> tup
 def _base_input() -> dict[str, Any]:
     return {
         "decision": "test",
+        "run_id": "run-test",
         "criteria_confirmed": True,
         "criteria_confirmation_source": "user-confirmed",
         "current_platform": "chatgpt",
         "major_platforms": ["chatgpt"],
         "score_scale": "0-100",
+        "discovery": {
+            "external_discovery_done": False,
+            "external_discovery_blocked": True,
+            "block_reason": "unit test local simulation",
+            "checked_at": "2026-04-18T00:00:00Z",
+        },
         "criteria": [
             {
                 "id": "fit",
@@ -309,6 +328,128 @@ class GuardrailScoreTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         assert result is not None
         self.assertEqual(result["independent_evaluations"], [])
+
+    def test_output_includes_audit_metadata_and_decision_status(self) -> None:
+        data = _base_input()
+        data["alternatives"] = [
+            {
+                "id": "a",
+                "name": "A",
+                "type": "internal",
+                "effort": "S",
+                "risk": "Low",
+                "feasible": True,
+                "justification": "baseline",
+                "scores": {"chatgpt": {"fit": 90, "risk": 90}},
+            },
+            {
+                "id": "b",
+                "name": "B",
+                "type": "external",
+                "effort": "M",
+                "risk": "Med",
+                "feasible": True,
+                "justification": "baseline",
+                "scores": {"chatgpt": {"fit": 80, "risk": 80}},
+            },
+        ]
+        data["discovery"] = {
+            "external_discovery_done": True,
+            "external_discovery_blocked": False,
+            "checked_at": "2026-04-18T00:00:00Z",
+        }
+        data["independent_evaluations"] = _independent_records("a", "b")
+
+        proc, result = _run(data)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        assert result is not None
+        self.assertEqual(result["run_id"], "run-test")
+        self.assertIn("scorer_version", result)
+        self.assertIn("rules_version", result)
+        self.assertIn("evaluated_at", result)
+        self.assertEqual(result["decision_status"], "proceed")
+
+    def test_json_schema_validation_on_input_and_output(self) -> None:
+        data = _base_input()
+        data["alternatives"] = [
+            {
+                "id": "external",
+                "name": "External",
+                "type": "external",
+                "effort": "M",
+                "risk": "Med",
+                "feasible": True,
+                "justification": "external option",
+                "scores": {"chatgpt": {"fit": 85, "risk": 85}},
+            },
+            {
+                "id": "internal",
+                "name": "Internal",
+                "type": "internal",
+                "effort": "S",
+                "risk": "Low",
+                "feasible": True,
+                "justification": "internal option",
+                "scores": {"chatgpt": {"fit": 80, "risk": 80}},
+            },
+        ]
+        data["discovery"] = {
+            "external_discovery_done": True,
+            "external_discovery_blocked": False,
+            "checked_at": "2026-04-18T00:00:00Z",
+        }
+        data["independent_evaluations"] = _independent_records("external", "internal")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "input.json"
+            output_path = tmp_path / "output.json"
+            input_path.write_text(json.dumps(data), encoding="utf-8")
+
+            score_proc = subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "--input",
+                    str(input_path),
+                    "--json-output",
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(score_proc.returncode, 0, score_proc.stderr)
+
+            in_proc = subprocess.run(
+                [
+                    "node",
+                    str(VALIDATOR),
+                    "--schema",
+                    str(INPUT_SCHEMA),
+                    "--data",
+                    str(input_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(in_proc.returncode, 0, in_proc.stderr)
+
+            out_proc = subprocess.run(
+                [
+                    "node",
+                    str(VALIDATOR),
+                    "--schema",
+                    str(OUTPUT_SCHEMA),
+                    "--data",
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(out_proc.returncode, 0, out_proc.stderr)
 
 
 if __name__ == "__main__":
