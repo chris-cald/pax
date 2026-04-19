@@ -97,6 +97,11 @@ ehthumbs_vista.db
 .Trash-*
 .nfs*
 
+# Node.js / npm
+node_modules/
+.npm/
+.pnpm-store/
+
 # LLM Agent Directories
 .agents/**
 

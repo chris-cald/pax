@@ -11,7 +11,7 @@
     "hooks:pre-push": "pnpm run lint:frontmatter && pnpm run test:affected:pre-push",
     "lint:eslint:staged:fix": "eslint --fix",
     "lint:frontmatter": "echo 'No backlog to lint! Exiting...' && exit 0; tsx ../templjs/scripts/ci/lint-frontmatter.ts",
-    "lint:markdown:fix": "sh ../templjs/scripts/ci/lint-markdown.sh --fix",
+    "lint:markdown:fix": "sh scripts/ci/lint-markdown.sh --fix",
     "lint:staged": "lint-staged",
     "prepare": "husky",
     "test": "vitest run --passWithNoTests",
