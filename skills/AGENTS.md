@@ -38,6 +38,7 @@ Required fields:
 - **REQUIRED:** You MUST use the `skill-creator` skill for ALL skill interactions, including review, audit, creation, and updates.
 - Use the `skill-creator` skill to scaffold new skills
 - Follow examples: `write-technical-rfc`, `comparative-decision-analysis`, `creating-work-item`
+- For skills that delegate work, run in parallel, or split efforts across workspaces, compose `skills/aspects/sandboxing-workspace/SKILL.md`
 - Include trigger phrases in description for discoverability
 - Provide clear step-by-step instructions
 - Add examples and expected outputs
