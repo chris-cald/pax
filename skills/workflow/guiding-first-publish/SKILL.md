@@ -5,6 +5,7 @@ metadata:
   category: workflow
   aspects:
     - interaction-modes
+    - state-freshness-gate
   decisions:
     - id: first_publish_next_action
       trigger: after-phase-review
@@ -197,6 +198,7 @@ CI policy gates are agent-resolvable but sequential—fix and revalidate one at 
 - Never manually edit version fields when repo policy requires changesets
 - Distinguish clearly between repo-local blockers, CI policy gate blockers, and trust-boundary blockers
 - Stop on ambiguity rather than inventing release process
+- Before declaring publish-ready or handing off, run `/handle-pr-feedback` as the PR freshness and actionability guard
 - Do not coordinate publish execution — hand off to `publishing-prerelease` once publish-ready
 
 ## Workflow
@@ -403,6 +405,7 @@ Before declaring publish-ready and handing off, confirm:
 - trust-boundary blockers are cleared or explicitly noted as out-of-scope
 - CI policy gate blockers are resolved
 - ruleset approval requirements are understood and communicated
+- PR feedback state is fresh and non-blocking per `/handle-pr-feedback`
 
 Packaging dry-run commands to run before handoff:
 
@@ -417,6 +420,8 @@ pnpm pack --dry-run  # or npm pack --dry-run
 ```bash
 npx @vscode/vsce@3.7.1 package --no-dependencies
 ```
+
+Run `/handle-pr-feedback` immediately before the publish-ready decision. If it reports blocking feedback, complete its loop before continuing.
 
 If validation fails for packaging or release plumbing, delegate to `/triaging-release`.
 
@@ -436,6 +441,11 @@ Pass as context:
 - platform readiness summary
 - any known remaining human-gated actions (approvals, external config)
 - changeset / versioning state
+
+Hard precondition before handoff:
+
+- `/handle-pr-feedback` returns clear PR feedback state
+- CI policy gates are satisfied for the current head commit (not a prior commit snapshot)
 
 Do not continue to coordinate CI state, artifact paths, registry publication, or post-publish verification from this skill. All of that is `/publishing-prerelease`'s responsibility.
 
@@ -504,6 +514,12 @@ pre_pr_gates:
     - name: <check name>
       requires: <what file or PR content it checks for>
       status: satisfied | outstanding
+freshness_gate:
+  adapter: handle-pr-feedback
+  review_decision: APPROVED | REVIEW_REQUIRED | CHANGES_REQUESTED | unknown
+  unresolved_actionable_threads: <number>
+  last_feedback_check_at: <timestamp>
+  status: clear | blocking | unknown
 blockers:
   repo_local:
     - <item>
@@ -512,6 +528,8 @@ blockers:
   trust_boundary:
     - <item>
   ruleset_approval:
+    - <item>
+  pr_feedback:
     - <item>
 files_changed:
   - <path>
@@ -576,7 +594,11 @@ Both are valid terminal states for this skill.
 
 All CI checks passing is necessary but not sufficient. Repository rulesets can require human approval even when all automated checks are green. Always check ruleset requirements in Phase 2 and communicate approval gates clearly before opening a PR.
 
-### 5. Produce a Reusable Baseline
+### 5. Fresh Review State Before Handoff
+
+Do not make publish-ready decisions from earlier snapshots. Re-fetch `reviewDecision` and review thread resolution state immediately before Phase 6. New reviews can arrive between successful CI completion and handoff.
+
+### 6. Produce a Reusable Baseline
 
 The main value of the first run is not just the first publish—it is the reusable release path discovered and documented afterward.
 

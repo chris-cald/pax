@@ -1,11 +1,23 @@
 ---
 name: finalizing-work-item
-description: "Finalize templjs backlog work items. Use when moving a work item to closed after merge. Requires merged PR verification, test evidence, completed checklist items, and frontmatter validation before closure or archival."
+description: "Finalize backlog work items after implementation merge. Supports automation-first repos where close/archive is system-driven, plus manual closure checks for reconciliation or non-automated workflows."
 ---
 
 # Finalize Work Item
 
-Use this repo-local skill when closing a work item after implementation is merged.
+Use this skill when determining whether a work item should be manually closed and archived after implementation is merged.
+
+## Automation-first rule
+
+If repository config indicates `automation.autoCloseOnMerge: true`, do not manually set `status: closed` or move files to archive during normal feature execution.
+
+In automation mode:
+
+- keep the work item accurate through `ready-for-review` with checklist and PR linkage complete;
+- run `/process-pr` for the review/merge loop;
+- allow automation to create/link evidence and perform close/archive transitions after merge validation.
+
+Use manual finalization only for explicit reconciliation or repair work.
 
 ## Required closure checks
 
